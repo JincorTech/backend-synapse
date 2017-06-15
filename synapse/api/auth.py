@@ -51,6 +51,7 @@ class Auth(object):
         self.clock = hs.get_clock()
         self.store = hs.get_datastore()
         self.state = hs.get_state_handler()
+        # self.auth_handler = hs.get_auth_handler()
         self.TOKEN_NOT_FOUND_HTTP_STATUS = 401
         self.jwt_secret = hs.config.jwt_secret
         self.jwt_algorithm = hs.config.jwt_algorithm
@@ -267,6 +268,7 @@ class Auth(object):
             )
         defer.returnValue((user_id, app_service))
 
+    @defer.inlineCallbacks
     def get_user_by_access_token(self, token, rights="access"):
         """ Validate access token and get user_id from it
 
@@ -281,21 +283,26 @@ class Auth(object):
         """
 
         decoded = jwt.decode(token, self.jwt_secret, algorithms=[self.jwt_algorithm], audience=self.server_name)
-        user = UserID.from_string(decoded['sub'] + ":" + decoded['aud'])
+        user_id = UserID.from_string(decoded['sub'] + ":" + decoded['aud'])
+        user = yield self.store.get_user_by_id(decoded['sub'] + ":" + decoded['aud'])
+        if not (user):
+            raise AuthError(
+                403,
+                "Application service has not registered this user"
+            )
         if not user:
             raise AuthError(
                 self.TOKEN_NOT_FOUND_HTTP_STATUS,
                 "Guest access token used for regular user",
                 errcode=Codes.UNKNOWN_TOKEN
             )
-        ret = {
-            "user": user,
+        ret = yield {
+            "user": user_id,
             "is_guest": False,
             "token_id": None,
             "device_id": None,
         }
-
-        return ret
+        defer.returnValue(ret)
 
     def get_user_id_from_macaroon(self, macaroon):
         """Retrieve the user_id given by the caveats on the macaroon.
