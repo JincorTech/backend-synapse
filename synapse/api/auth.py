@@ -50,6 +50,9 @@ class Auth(object):
         self.store = hs.get_datastore()
         self.state = hs.get_state_handler()
         self.TOKEN_NOT_FOUND_HTTP_STATUS = 401
+        self.jwt_secret = hs.config.jwt_secret
+        self.jwt_algorithm = hs.config.jwt_algorithm
+        self.server_name = hs.config.server_name
 
     @defer.inlineCallbacks
     def check_from_context(self, event, context, do_sig_check=True):
@@ -275,100 +278,25 @@ class Auth(object):
         Raises:
             AuthError if no user by that token exists or the token is invalid.
         """
-        try:
-            macaroon = pymacaroons.Macaroon.deserialize(token)
-        except Exception:  # deserialize can throw more-or-less anything
-            # doesn't look like a macaroon: treat it as an opaque token which
-            # must be in the database.
-            # TODO: it would be nice to get rid of this, but apparently some
-            # people use access tokens which aren't macaroons
-            r = yield self._look_up_user_by_access_token(token)
-            defer.returnValue(r)
+        import jwt
+        from jwt.exceptions import InvalidTokenError
 
-        try:
-            user_id = self.get_user_id_from_macaroon(macaroon)
-            user = UserID.from_string(user_id)
 
-            self.validate_macaroon(
-                macaroon, rights, self.hs.config.expire_access_token,
-                user_id=user_id,
-            )
-
-            guest = False
-            for caveat in macaroon.caveats:
-                if caveat.caveat_id == "guest = true":
-                    guest = True
-
-            if guest:
-                # Guest access tokens are not stored in the database (there can
-                # only be one access token per guest, anyway).
-                #
-                # In order to prevent guest access tokens being used as regular
-                # user access tokens (and hence getting around the invalidation
-                # process), we look up the user id and check that it is indeed
-                # a guest user.
-                #
-                # It would of course be much easier to store guest access
-                # tokens in the database as well, but that would break existing
-                # guest tokens.
-                stored_user = yield self.store.get_user_by_id(user_id)
-                if not stored_user:
-                    raise AuthError(
-                        self.TOKEN_NOT_FOUND_HTTP_STATUS,
-                        "Unknown user_id %s" % user_id,
-                        errcode=Codes.UNKNOWN_TOKEN
-                    )
-                if not stored_user["is_guest"]:
-                    raise AuthError(
-                        self.TOKEN_NOT_FOUND_HTTP_STATUS,
-                        "Guest access token used for regular user",
-                        errcode=Codes.UNKNOWN_TOKEN
-                    )
-                ret = {
-                    "user": user,
-                    "is_guest": True,
-                    "token_id": None,
-                    # all guests get the same device id
-                    "device_id": GUEST_DEVICE_ID,
-                }
-            elif rights == "delete_pusher":
-                # We don't store these tokens in the database
-                ret = {
-                    "user": user,
-                    "is_guest": False,
-                    "token_id": None,
-                    "device_id": None,
-                }
-            else:
-                # This codepath exists for several reasons:
-                #   * so that we can actually return a token ID, which is used
-                #     in some parts of the schema (where we probably ought to
-                #     use device IDs instead)
-                #   * the only way we currently have to invalidate an
-                #     access_token is by removing it from the database, so we
-                #     have to check here that it is still in the db
-                #   * some attributes (notably device_id) aren't stored in the
-                #     macaroon. They probably should be.
-                # TODO: build the dictionary from the macaroon once the
-                # above are fixed
-                ret = yield self._look_up_user_by_access_token(token)
-                if ret["user"] != user:
-                    logger.error(
-                        "Macaroon user (%s) != DB user (%s)",
-                        user,
-                        ret["user"]
-                    )
-                    raise AuthError(
-                        self.TOKEN_NOT_FOUND_HTTP_STATUS,
-                        "User mismatch in macaroon",
-                        errcode=Codes.UNKNOWN_TOKEN
-                    )
-            defer.returnValue(ret)
-        except (pymacaroons.exceptions.MacaroonException, TypeError, ValueError):
+        decoded = jwt.decode(token, self.jwt_secret, algorithms=[self.jwt_algorithm], audience=self.server_name)
+        user = UserID.from_string(decoded['sub'] + ":" + decoded['aud'])
+        if not user:
             raise AuthError(
-                self.TOKEN_NOT_FOUND_HTTP_STATUS, "Invalid macaroon passed.",
+                self.TOKEN_NOT_FOUND_HTTP_STATUS,
+                "Guest access token used for regular user",
                 errcode=Codes.UNKNOWN_TOKEN
             )
+        ret = {
+            "user": user,
+            "is_guest": False,
+            "token_id": None,
+            "device_id": None,
+        }
+        defer.returnValue(ret)
 
     def get_user_id_from_macaroon(self, macaroon):
         """Retrieve the user_id given by the caveats on the macaroon.
@@ -447,7 +375,7 @@ class Auth(object):
         if not ret:
             logger.warn("Unrecognised access token - not in store: %s" % (token,))
             raise AuthError(
-                self.TOKEN_NOT_FOUND_HTTP_STATUS, "Unrecognised access token.",
+                self.TOKEN_NOT_FOUND_HTTP_STATUS, "Unrecognised access token : %s" %(token,),
                 errcode=Codes.UNKNOWN_TOKEN
             )
         # we use ret.get() below because *lots* of unit tests stub out

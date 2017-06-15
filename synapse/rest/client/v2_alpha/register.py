@@ -499,9 +499,7 @@ class RegisterRestServlet(RestServlet):
 
         defer.returnValue({
             "user_id": user_id,
-            "access_token": access_token,
-            "home_server": self.hs.hostname,
-            "device_id": device_id,
+            "home_server": self.hs.hostname
         })
 
     def _register_device(self, user_id, params):
@@ -546,8 +544,6 @@ class RegisterRestServlet(RestServlet):
         )
         defer.returnValue((200, {
             "user_id": user_id,
-            "device_id": device_id,
-            "access_token": access_token,
             "home_server": self.hs.hostname,
         }))
 
