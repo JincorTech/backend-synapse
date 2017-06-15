@@ -17,6 +17,8 @@ import logging
 
 import pymacaroons
 from twisted.internet import defer
+import jwt
+from jwt.exceptions import InvalidTokenError
 
 import synapse.types
 from synapse import event_auth
@@ -265,7 +267,6 @@ class Auth(object):
             )
         defer.returnValue((user_id, app_service))
 
-    @defer.inlineCallbacks
     def get_user_by_access_token(self, token, rights="access"):
         """ Validate access token and get user_id from it
 
@@ -278,9 +279,6 @@ class Auth(object):
         Raises:
             AuthError if no user by that token exists or the token is invalid.
         """
-        import jwt
-        from jwt.exceptions import InvalidTokenError
-
 
         decoded = jwt.decode(token, self.jwt_secret, algorithms=[self.jwt_algorithm], audience=self.server_name)
         user = UserID.from_string(decoded['sub'] + ":" + decoded['aud'])
@@ -296,7 +294,8 @@ class Auth(object):
             "token_id": None,
             "device_id": None,
         }
-        defer.returnValue(ret)
+
+        return ret
 
     def get_user_id_from_macaroon(self, macaroon):
         """Retrieve the user_id given by the caveats on the macaroon.
