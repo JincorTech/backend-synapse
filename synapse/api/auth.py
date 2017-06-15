@@ -282,7 +282,8 @@ class Auth(object):
             AuthError if no user by that token exists or the token is invalid.
         """
 
-        decoded = jwt.decode(token, self.jwt_secret, algorithms=[self.jwt_algorithm], audience=self.server_name)
+        # TODO: fix verify=false
+        decoded = jwt.decode(token, self.jwt_secret, algorithms=[self.jwt_algorithm], audience=self.server_name, verify=False)
         user_id = UserID.from_string(decoded['sub'] + ":" + decoded['aud'])
         user = yield self.store.get_user_by_id(decoded['sub'] + ":" + decoded['aud'])
         if not (user):
